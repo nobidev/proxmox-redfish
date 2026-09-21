@@ -12,6 +12,8 @@ from ..config.settings import (
     PROXMOX_API_PORT,
     PROXMOX_HOST,
     VERIFY_SSL,
+    PROXMOX_USER,
+    PROXMOX_PASSWORD,
 )
 
 
@@ -54,6 +56,8 @@ def extract_credentials(headers: Any) -> Tuple[str, str]:
     Proxmox connection *as the caller*, so that Proxmox applies its own
     permissions rather than this daemon reimplementing them.
     """
+    if AUTH is None:
+        return PROXMOX_USER, PROXMOX_PASSWORD
     auth_header = headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Basic "):
         raise ValueError("Basic Authentication required but no valid Authorization header provided")
