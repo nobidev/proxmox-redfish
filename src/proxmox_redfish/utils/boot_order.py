@@ -1,9 +1,62 @@
 """Boot order management utilities for the Proxmox Redfish daemon."""
 
+from re import findall
+
 from proxmoxer import ProxmoxAPI
 
+from .meta import get_description, update_description
 from ..config.logging_config import logger
+from ..config.settings import BOOT_HD, BOOT_CD, BOOT_PXE
 from ..proxmox.placement import vm
+
+
+def get_current_boot(config):
+    _, meta = get_description(config)
+    order = meta.get("boot-persistent")
+    if not order:
+        boot = config.get("boot", "")
+        order = ""
+        m = findall(r"^order=(.+)$", boot)
+        if m:
+            order = m.pop()
+    override = meta.get("boot-override")
+    if not override:
+        return order, None
+    return order, (override.get("enabled", "Disabled"), override.get("target", "None"))
+
+
+def build_boot_override_config(config, override=None, current=None, enabled=None, target=None):
+    if current is None:
+        current, _ = get_current_boot(config)
+    r = {
+        "boot": f"order={override}" if override else "",
+    }
+    if enabled is not None:
+        if enabled == "Disabled":
+            r["boot"] = f"order={current}" if current else ""
+            r["description"] = update_description(config, meta={"boot-persistent": None, "boot-override": None})
+        else:
+            meta = {
+                "boot-persistent": current,
+                "boot-override": {
+                    "enabled": enabled,
+                    "target": target,
+                },
+            }
+            r["description"] = update_description(config, meta=meta)
+    return r
+
+
+def clear_boot_override(proxmox: ProxmoxAPI, vm_id: int):
+    config = vm(proxmox, vm_id).config.get()
+    current, override = get_current_boot(config)
+    override_enabled = "Disable"
+    if override:
+        override_enabled, _ = override
+    if override_enabled == "Once":
+        config_data = build_boot_override_config(config, current=current, enabled="Disabled")
+        task = vm(proxmox, vm_id).config.post(**config_data)
+        logger.debug(f"Clear override {override_enabled} boot: {task}")
 
 
 def reorder_boot_order(proxmox: ProxmoxAPI, vm_id: int, current_order: str, target: str) -> str:
@@ -19,9 +72,9 @@ def reorder_boot_order(proxmox: ProxmoxAPI, vm_id: int, current_order: str, targ
         # Parse current boot order
         devices = current_order.split(";") if current_order else []
         # Initialize device lists
-        disk_devs = []
-        cd_dev = None
-        net_dev = None
+        disk_devs = [BOOT_HD] if BOOT_HD else []
+        cd_dev = BOOT_CD
+        net_dev = BOOT_PXE
 
         # Check for hard drives and CD-ROMs (SCSI, SATA, IDE)
         for dev_type in ["scsi", "sata", "ide"]:
@@ -29,17 +82,18 @@ def reorder_boot_order(proxmox: ProxmoxAPI, vm_id: int, current_order: str, targ
                 dev_key = f"{dev_type}{i}"
                 if dev_key in config:
                     dev_value = config[dev_key]
-                    if "media=cdrom" in dev_value:
+                    if "media=cdrom" in dev_value and cd_dev is None:
                         cd_dev = dev_key  # CD-ROM found
-                    elif dev_type in ["scsi", "sata"] or (dev_type == "ide" and "media=cdrom" not in dev_value):
+                    elif (dev_type in ["scsi", "sata"] or (dev_type == "ide" and "media=cdrom" not in dev_value)) and dev_key not in disk_devs:
                         disk_devs.append(dev_key)  # Hard drive found
 
         # Check for network devices
-        for i in range(4):  # net0-3 (simplified range)
-            net_key = f"net{i}"
-            if net_key in config:
-                net_dev = net_key
-                break
+        if not net_dev:
+            for i in range(4):  # net0-3 (simplified range)
+                net_key = f"net{i}"
+                if net_key in config:
+                    net_dev = net_key
+                    break
 
         # Build the full list of available devices, preserving all from config and current order
         available_devs = [d for d in devices if d in config] if devices else []

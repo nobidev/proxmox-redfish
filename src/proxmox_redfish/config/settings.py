@@ -24,3 +24,9 @@ SSL_CA_FILE = os.getenv("SSL_CA_FILE", "/opt/proxmox-redfish/config/ssl/ca.crt")
 
 # Authentication mode. Only "Basic" is implemented; see the X-Auth-Token issue.
 AUTH = "Basic"
+
+META_KEY = "proxmox-redfish"
+
+BOOT_HD = os.getenv("PROXMOX_BOOT_HD")
+BOOT_CD = os.getenv("PROXMOX_BOOT_CD")
+BOOT_PXE = os.getenv("PROXMOX_BOOT_PXE")

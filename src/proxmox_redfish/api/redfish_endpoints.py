@@ -8,6 +8,7 @@ from proxmoxer import ProxmoxAPI
 
 from ..config.logging_config import logger
 from ..proxmox.placement import vm
+from ..utils.boot_order import get_current_boot
 from ..utils.error_handling import handle_proxmox_error
 
 
@@ -50,10 +51,11 @@ def get_vm_status(proxmox: ProxmoxAPI, vm_id: int) -> Union[Dict[str, Any], Tupl
         memory_summary = {"TotalSystemMemoryGiB": round(memory_mb / 1024.0, 2)}
 
         # Add Boot field as expected by tests
-        boot_order = config.get("boot", "")
+        boot_order, override = get_current_boot(config)
+        override_enabled, override_target = override if override else ("Disabled", "None")
         boot_field = {
-            "BootSourceOverrideEnabled": "Once",  # or "Continuous"/"Disabled" as appropriate
-            "BootSourceOverrideTarget": "None",  # Could be "Pxe", "Cd", "Hdd", etc.
+            "BootSourceOverrideEnabled": override_enabled,  # "Once"/"Continuous"/"Disabled" as appropriate
+            "BootSourceOverrideTarget": override_target,  # Could be "Pxe", "Cd", "Hdd", etc.
             "BootSourceOverrideMode": "UEFI" if config.get("bios") == "ovmf" else "Legacy",
             "BootSourceOverrideTarget@Redfish.AllowableValues": ["Pxe", "Cd", "Hdd"],
             "BootSourceOverrideMode@Redfish.AllowableValues": ["UEFI", "Legacy"],

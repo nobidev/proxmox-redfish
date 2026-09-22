@@ -42,7 +42,7 @@ from ..config.settings import AUTH, PROXMOX_HOST, VERIFY_SSL
 from ..proxmox.client import get_proxmox_api
 from ..proxmox.placement import list_vm_ids, vm
 from ..proxmox.vm_operations import update_vm_config
-from ..utils.boot_order import reorder_boot_order
+from ..utils.boot_order import reorder_boot_order, get_current_boot, build_boot_override_config, clear_boot_override
 from ..utils.error_handling import handle_proxmox_error
 from ..utils.redaction import redact_headers, redact_payload, redact_response
 
@@ -377,6 +377,7 @@ class RedfishRequestHandler(BaseHTTPRequestHandler):
                         reset_type = data.get("ResetType", "")
                         if reset_type == "On":
                             response, status_code = power_on(proxmox, vm_id)
+                            clear_boot_override(proxmox, vm_id)
                         elif reset_type == "GracefulShutdown":
                             response, status_code = power_off(proxmox, vm_id)
                         elif reset_type == "ForceOff":
@@ -713,11 +714,14 @@ class RedfishRequestHandler(BaseHTTPRequestHandler):
                             logger.debug(f"VM {vm_id}, proceeding with boot order change to {target}")
                             try:
                                 config = vm(proxmox, vm_id).config.get()
-                                current_boot = config.get("boot", "")
+                                current_boot, _ = get_current_boot(config)
                                 logger.debug(f"Current boot order: {current_boot}")
-                                new_boot_order = reorder_boot_order(proxmox, int(vm_id), current_boot, target)
-                                logger.debug(f"New boot order: {new_boot_order}")
-                                config_data = {"boot": f"order={new_boot_order}" if new_boot_order else ""}
+                                if enabled == "Disabled" or not target:
+                                    new_boot_order = current_boot
+                                else:
+                                    new_boot_order = reorder_boot_order(proxmox, int(vm_id), current_boot, target)
+                                logger.debug(f"New boot order: {new_boot_order} ({enabled} - {target})")
+                                config_data = build_boot_override_config(config, current=current_boot, override=new_boot_order, enabled=enabled, target=target)
                                 task = vm(proxmox, vm_id).config.post(**config_data)
                                 logger.debug(f"Boot order update task initiated: {task}")
                                 response = {
@@ -728,7 +732,7 @@ class RedfishRequestHandler(BaseHTTPRequestHandler):
                                     "TaskState": "Running",
                                     "TaskStatus": "OK",
                                     "Messages": [
-                                        {"Message": f"Boot order set to {target} ({new_boot_order}) for VM {vm_id}"}
+                                        {"Message": f"Boot order set to {enabled} - {target} ({new_boot_order}) for VM {vm_id}"}
                                     ],
                                 }
                                 status_code = 202
